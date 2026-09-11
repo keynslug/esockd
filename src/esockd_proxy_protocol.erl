@@ -201,8 +201,10 @@ recv_v2(Transport, Sock, Deadline) ->
         end
     end).
 
-%% A zero-length socket receive consumes application data rather than no bytes.
-recv_v2_body(_Transport, _Sock, 0, _Timeout) ->
+recv_v2_body(_Transport, _Sock, _Len = 0, _Timeout) ->
+    %% No extra proxy information, return empty binary.
+    %% Otherwise, a zero-length socket receive consumes application data available
+    %% in the socket buffers.
     {ok, <<>>};
 recv_v2_body(Transport, Sock, Len, Timeout) ->
     Transport:recv(Sock, Len, Timeout).
