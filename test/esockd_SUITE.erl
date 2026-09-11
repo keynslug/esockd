@@ -877,6 +877,69 @@ t_tune_fun_ok(_) ->
     ?assertEqual(1, proplists:get_value(accepted, Cnts)),
     ok = esockd:close(Name, LPort).
 
+%% A socket denied by the access rules is counted as `closed_forbidden'.
+t_closed_forbidden(_) ->
+    LPort = 7006,
+    Name = ?FUNCTION_NAME,
+    {ok, _LSup} = esockd:open(Name, LPort,
+                              [{access_rules, [{deny, "127.0.0.1/32"}]},
+                               {connection_mfargs, echo_server}]),
+    try
+        {ok, Socket} = gen_tcp:connect("127.0.0.1", LPort, [{active, true}]),
+        receive
+            {tcp_closed, Socket} -> ok
+        after 1000 ->
+            ct:fail(close_timeout)
+        end,
+        Cnts = esockd_server:get_stats({Name, LPort}),
+        ?assertEqual(0, proplists:get_value(accepted, Cnts)),
+        ?assertEqual(1, proplists:get_value(closed_forbidden, Cnts)),
+        ?assertEqual(0, proplists:get_value(closed_other_reasons, Cnts))
+    after
+        ok = esockd:close(Name, LPort)
+    end.
+
+%% A socket reset by the peer before the connection process is started
+%% is counted as `closed_early'.
+t_closed_early(_) ->
+    LPort = 7007,
+    Name = ?FUNCTION_NAME,
+    TuneFun = {?MODULE, sock_tune_fun_wait, [self()]},
+    {ok, _LSup} = esockd:open(Name, LPort,
+                              [{tune_fun, TuneFun},
+                               {connection_mfargs, echo_server}]),
+    try
+        {ok, Socket} = gen_tcp:connect("127.0.0.1", LPort, [{active, false}]),
+        %% The acceptor holds the accepted socket in tune_fun.
+        Acceptor = receive {tune_fun_wait, Pid} -> Pid
+                   after 1000 -> ct:fail(tune_fun_timeout)
+                   end,
+        %% Reset the connection from the client side.
+        ok = inet:setopts(Socket, [{linger, {true, 0}}]),
+        ok = gen_tcp:close(Socket),
+        Acceptor ! tune_fun_continue,
+        ok = wait_for_stats({Name, LPort}, closed_early, 1, 1000),
+        Cnts = esockd_server:get_stats({Name, LPort}),
+        ?assertEqual(0, proplists:get_value(accepted, Cnts)),
+        ?assertEqual(0, proplists:get_value(closed_other_reasons, Cnts))
+    after
+        ok = esockd:close(Name, LPort)
+    end.
+
+wait_for_stats(ListenerRef, Metric, Expected, Timeout) when Timeout > 0 ->
+    case proplists:get_value(Metric, esockd_server:get_stats(ListenerRef)) of
+        Expected ->
+            ok;
+        _ ->
+            timer:sleep(10),
+            wait_for_stats(ListenerRef, Metric, Expected, Timeout - 10)
+    end;
+wait_for_stats(ListenerRef, Metric, Expected, _Timeout) ->
+    ct:fail(#{cause => stats_timeout,
+              metric => Metric,
+              expected => Expected,
+              stats => esockd_server:get_stats(ListenerRef)}).
+
 
 t_listener_handle_port_exit_tcp(Config) ->
     do_listener_handle_port_exit(Config, false).
@@ -952,6 +1015,10 @@ do_listener_handle_port_exit(Config, IsTls) ->
 %% helper
 sock_tune_fun(Ret) ->
     Ret.
+
+sock_tune_fun_wait(TestPid) ->
+    TestPid ! {tune_fun_wait, self()},
+    receive tune_fun_continue -> ok end.
 
 -spec get_acceptors(supervisor:supervisor()) -> [Acceptor::pid()].
 get_acceptors(LSup) ->

@@ -123,6 +123,9 @@ handle_event(info, Message, State = {accepting, Ref, InState}, D) ->
     case async_accept_result(Message, Ref, D) of
         {ok, Sock} ->
             handle_accepted(Sock, InState, D);
+        {error, closed} ->
+            %% The listen socket is closed, no client socket to count.
+            listener_socket_closed(D);
         {error, Reason} ->
             inc_stats(D, Reason),
             handle_socket_error(Reason, InState, D);
@@ -238,8 +241,6 @@ maybe_log_start_error(Reason, D) ->
                         listener => format_sockname(D),
                         cause => Reason}).
 
-handle_socket_error(closed, _State, D) ->
-    listener_socket_closed(D);
 %% {error, econnaborted} -> accept
 handle_socket_error(econnaborted, State, D) ->
     {next_state, State, D, {next_event, internal, accept}};
@@ -285,6 +286,12 @@ counter(enfile) -> ?ARG_CLOSED_SYS_LIMIT;
 counter(?ERROR_MAXLIMIT) -> ?ARG_CLOSED_MAX_LIMIT;
 counter(overloaded) -> ?ARG_CLOSED_OVERLOADED;
 counter(rate_limited) -> ?ARG_CLOSED_RATE_LIMITED;
+counter(econnaborted) -> ?ARG_CLOSED_EARLY;
+counter(econnreset) -> ?ARG_CLOSED_EARLY;
+counter(enotconn) -> ?ARG_CLOSED_EARLY;
+counter(einval) -> ?ARG_CLOSED_EARLY;
+counter(closed) -> ?ARG_CLOSED_EARLY;
+counter(forbidden) -> ?ARG_CLOSED_FORBIDDEN;
 counter(_) -> ?ARG_CLOSED_OTHER_REASONS.
 
 start_connection(ConnSup, Transport, Sock, UpgradeFuns) when is_pid(ConnSup) ->

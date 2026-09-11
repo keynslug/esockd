@@ -90,8 +90,10 @@ inc_stats({Protocol, ListenOn}, Metric, Num) when is_integer(Num) ->
 dec_stats({Protocol, ListenOn}, Metric, Num) when is_integer(Num) ->
     update_counter({{Protocol, ListenOn}, Metric}, -Num).
 
+%% NOTE: The default row keeps the caller from crashing when the metric
+%% was not initialized, e.g. a listener started before the metric was added.
 update_counter(Key, Num) ->
-    ets:update_counter(?STATS_TAB, Key, {2, Num}).
+    ets:update_counter(?STATS_TAB, Key, {2, Num}, {Key, 0}).
 
 -spec(del_stats({atom(), esockd:listen_on()}) -> ok).
 del_stats({Protocol, ListenOn}) ->

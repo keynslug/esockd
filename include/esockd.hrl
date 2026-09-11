@@ -79,6 +79,11 @@
 -define(ARG_CLOSED_MAX_LIMIT, closed_max_limit).
 -define(ARG_CLOSED_OVERLOADED, closed_overloaded).
 -define(ARG_CLOSED_RATE_LIMITED, closed_rate_limited).
+%% The socket failed before the connection process was started,
+%% most likely because the peer closed or reset it.
+-define(ARG_CLOSED_EARLY, closed_early).
+%% The peer address is denied by the access rules.
+-define(ARG_CLOSED_FORBIDDEN, closed_forbidden).
 -define(ARG_CLOSED_OTHER_REASONS, closed_other_reasons).
 
 -define(ACCEPT_RESULT_GROUPS,
@@ -88,6 +93,8 @@
             ?ARG_CLOSED_MAX_LIMIT,
             ?ARG_CLOSED_OVERLOADED,
             ?ARG_CLOSED_RATE_LIMITED,
+            ?ARG_CLOSED_EARLY,
+            ?ARG_CLOSED_FORBIDDEN,
             ?ARG_CLOSED_OTHER_REASONS
         ]).
 

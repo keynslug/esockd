@@ -36,6 +36,16 @@ t_inc_dec_stats(_) ->
     [] = esockd_server:get_stats(Name),
     ok = esockd_server:stop().
 
+%% Updating a metric that was not initialized creates it.
+t_inc_uninitialized_stats(_) ->
+    {ok, _} = esockd_server:start_link(),
+    Name = {echo, 3000},
+    esockd_server:init_stats(Name, [accepting]),
+    esockd_server:inc_stats(Name, closed_early, 1),
+    ?assertEqual([{accepting, 0}, {closed_early, 1}],
+                 lists:sort(esockd_server:get_stats(Name))),
+    ok = esockd_server:stop().
+
 t_stats_fun(_) ->
     {ok, _} = esockd_server:start_link(),
     StatsFun = esockd_server:stats_fun({echo, 3000}, accepting),

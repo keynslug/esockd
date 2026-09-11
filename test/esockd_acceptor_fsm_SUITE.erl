@@ -30,6 +30,8 @@
 -define(COUNTER_SYS_LIMIT, 4).
 -define(COUNTER_MAX_LIMIT, 5).
 -define(COUNTER_OTHER_REASONS, 6).
+-define(COUNTER_EARLY, 7).
+-define(COUNTER_FORBIDDEN, 8).
 -define(COUNTER_LAST, 10).
 
 counter_tag_to_index(accepted) -> ?COUNTER_ACCEPTED;
@@ -37,6 +39,8 @@ counter_tag_to_index(closed_sys_limit) -> ?COUNTER_SYS_LIMIT;
 counter_tag_to_index(closed_max_limit) -> ?COUNTER_MAX_LIMIT;
 counter_tag_to_index(closed_overloaded) -> ?COUNTER_OVERLOADED;
 counter_tag_to_index(closed_rate_limited) -> ?COUNTER_RATE_LIMITED;
+counter_tag_to_index(closed_early) -> ?COUNTER_EARLY;
+counter_tag_to_index(closed_forbidden) -> ?COUNTER_FORBIDDEN;
 counter_tag_to_index(closed_other_reasons) -> ?COUNTER_OTHER_REASONS.
 
 all() -> 
@@ -194,7 +198,54 @@ t_einval(Config) ->
     Server = start(Port, no_rate_limit(), Opts, Config),
     {ok, Sock1} = connect(Port),
     try
+        ok = wait_for_counter(Config, ?COUNTER_EARLY, 1, 2000),
+        ?assertEqual(0, get_counter(Config, ?COUNTER_OTHER_REASONS)),
+        disconnect(Sock1)
+    after
+        stop(Server)
+    end.
+
+%% Failed to tune the socket opts for a reason that is not a socket error
+t_tune_fun_other_error(Config) ->
+    Port = ?PORT,
+    Opts = #{tune_fun => {fun(_, _) -> {error, unknown} end, []}},
+    Server = start(Port, no_rate_limit(), Opts, Config),
+    {ok, Sock1} = connect(Port),
+    try
         ok = wait_for_counter(Config, ?COUNTER_OTHER_REASONS, 1, 2000),
+        ?assertEqual(0, get_counter(Config, ?COUNTER_EARLY)),
+        disconnect(Sock1)
+    after
+        stop(Server)
+    end.
+
+%% The socket is closed before the connection process is started
+t_closed_early(Config) ->
+    lists:foreach(
+      fun(Reason) ->
+              Port = ?PORT,
+              Opts = #{start_connection_result => {error, Reason}},
+              Server = start(Port, no_rate_limit(), Opts, Config),
+              {ok, Sock1} = connect(Port),
+              try
+                  ok = wait_for_counter(Config, ?COUNTER_EARLY, 1, 2000),
+                  ?assertEqual(0, get_counter(Config, ?COUNTER_OTHER_REASONS)),
+                  disconnect(Sock1)
+              after
+                  stop(Server),
+                  reset_counter(Config, ?COUNTER_EARLY)
+              end
+      end, [econnreset, enotconn, einval, closed]).
+
+%% The peer address is denied by the access rules
+t_forbidden(Config) ->
+    Port = ?PORT,
+    Opts = #{start_connection_result => {error, forbidden}},
+    Server = start(Port, no_rate_limit(), Opts, Config),
+    {ok, Sock1} = connect(Port),
+    try
+        ok = wait_for_counter(Config, ?COUNTER_FORBIDDEN, 1, 2000),
+        ?assertEqual(0, get_counter(Config, ?COUNTER_OTHER_REASONS)),
         disconnect(Sock1)
     after
         stop(Server)
@@ -258,6 +309,9 @@ t_close_listener_socket_cause_acceptor_stop(Config) ->
         1000 ->
             error("Acceptor process did not terminate in time")
     end,
+    %% A closed listen socket is not a closed client socket.
+    ?assertEqual(0, get_counter(Config, ?COUNTER_EARLY)),
+    ?assertEqual(0, get_counter(Config, ?COUNTER_OTHER_REASONS)),
     receive
         {listen_socket_closed, Acceptor} ->
             ok
@@ -325,6 +379,12 @@ consume(_Token, #{name := no_rate_limit} = Limiter) ->
     {ok, Limiter}.
 
 now_ts() -> erlang:system_time(millisecond).
+
+get_counter(Config, Index) ->
+    counters:get(proplists:get_value(counters, Config), Index).
+
+reset_counter(Config, Index) ->
+    counters:put(proplists:get_value(counters, Config), Index, 0).
 
 wait_for_counter(Config, Index, Count, Timeout) ->
     Counters = proplists:get_value(counters, Config),
